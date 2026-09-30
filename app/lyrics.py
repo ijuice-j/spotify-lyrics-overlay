@@ -33,7 +33,7 @@ from typing import Callable, List, Optional
 import requests
 
 LRCLIB_BASE = "https://lrclib.net/api"
-USER_AGENT = "spotify-lyrics-overlay/1.0 (https://github.com/viraj-rgb/spotify-lyrics-overlay)"
+USER_AGENT = "spotify-lyrics-overlay/1.0 (https://github.com/ijuice-j/spotify-lyrics-overlay)"
 
 # A line is split across its words by character weight, but every word also gets
 # a flat share so that short words ("a", "I") do not flash past unreadably.

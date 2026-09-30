@@ -5,8 +5,8 @@
 ![Spotify lyrics overlay in its Focus design: the sung line is sharp and highlighted word by word, with the lines around it blurred](docs/design-focus.png)
 
 <p align="center">
-  <a href="https://github.com/viraj-rgb/spotify-lyrics-overlay/releases/latest/download/SpotifyLyricsOverlay-Setup.exe">
-    <b>⬇ Download for Windows — one click, no setup</b>
+  <a href="https://github.com/ijuice-j/spotify-lyrics-overlay/releases/latest/download/SpotifyLyricsOverlay-portable.exe">
+    <b>⬇ Download for Windows — one file, no install</b>
   </a>
   <br>
   <sub>Free · no account · no API key · Windows 10/11</sub>
@@ -27,7 +27,7 @@
 ## Download
 
 <p align="center">
-  <a href="https://github.com/viraj-rgb/spotify-lyrics-overlay/releases/latest/download/SpotifyLyricsOverlay-Setup.exe">
+  <a href="https://github.com/ijuice-j/spotify-lyrics-overlay/releases/latest/download/SpotifyLyricsOverlay-Setup.exe">
     <b>⬇ Download for Windows (installer, ~155 MB)</b>
   </a>
 </p>
@@ -44,7 +44,9 @@ Then start Spotify and play something.
 > [build it yourself](#run-from-source).
 
 **Prefer not to install anything?** The same release has
-`SpotifyLyricsOverlay-win64.zip` — a portable build. Unzip it anywhere and run
+[`SpotifyLyricsOverlay-portable.exe`](https://github.com/ijuice-j/spotify-lyrics-overlay/releases/latest/download/SpotifyLyricsOverlay-portable.exe)
+— a single file you just double-click — and `SpotifyLyricsOverlay-win64.zip`,
+the same app as a folder that starts a little faster. Unzip it anywhere and run
 `SpotifyLyricsOverlay.exe`. Nothing is written outside the folder except your
 settings.
 
@@ -124,7 +126,7 @@ Lyrics are cached, so replaying a song works offline.
 ## Run from source
 
 ```bat
-git clone https://github.com/viraj-rgb/spotify-lyrics-overlay.git
+git clone https://github.com/ijuice-j/spotify-lyrics-overlay.git
 cd spotify-lyrics-overlay
 pip install -r requirements.txt
 python install.py
