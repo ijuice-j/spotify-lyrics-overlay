@@ -7,37 +7,59 @@
 </head>
 <body>
   <!-- The card is the drag surface. Anything interactive inside it opts out
-       via [data-no-drag] so buttons do not start a window drag. -->
-  <main id="card" class="card" data-state="idle">
-    <header class="meta">
-      <div class="meta__text">
-        <span id="title" class="meta__title">Lyric Overlay</span>
-        <span class="meta__sep" aria-hidden="true">·</span>
-        <span id="artist" class="meta__artist">waiting for Spotify</span>
-      </div>
-      <div class="meta__controls" data-no-drag>
-        <button id="close" class="ctl ctl--close" title="Close">×</button>
-      </div>
-    </header>
+       via [data-no-drag] so buttons do not start a window drag.
 
-    <section id="stage" class="stage">
-      <div id="lines" class="lines"></div>
+       Both designs live in the page; data-design on the card decides which
+       one is shown, so switching in Settings is instant and needs no reload. -->
+  <main id="card" class="card" data-design="focus" data-state="idle">
 
-      <!-- Shown while waiting, during instrumental passages, and when a track
-           has no lyrics available. -->
-      <div id="pulse" class="pulse" aria-hidden="true">
-        <span></span><span></span><span></span>
+    <!-- Focus: a card whose neighbouring lines sit out of focus. -->
+    <section class="focus">
+      <svg class="grain" aria-hidden="true">
+        <filter id="grain"><feTurbulence type="fractalNoise" baseFrequency="0.95" numOctaves="2" stitchTiles="stitch"/><feColorMatrix type="saturate" values="0"/></filter>
+        <rect width="100%" height="100%" filter="url(#grain)"/>
+      </svg>
+
+      <header class="focus__meta">
+        <div class="cover" aria-hidden="true"></div>
+        <span class="focus__title" data-bind="title">Lyric Overlay</span>
+        <span class="focus__artist" data-bind="artist"></span>
+        <span class="focus__time" data-bind="time"></span>
+        <button class="close" data-no-drag title="Hide to tray" aria-label="Hide to tray">
+          <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 2.5l7 7M9.5 2.5l-7 7"/></svg>
+        </button>
+      </header>
+
+      <div class="focus__stage">
+        <div class="focus__stack" id="stack">
+          <div class="slot slot--far" data-slot="-2"></div>
+          <div class="slot slot--near" data-slot="-1"></div>
+          <div class="slot slot--active" id="active"></div>
+          <div class="slot slot--near" data-slot="1"></div>
+          <div class="slot slot--far" data-slot="2"></div>
+        </div>
       </div>
 
-      <p id="notice" class="notice"></p>
+      <div class="focus__progress" aria-hidden="true"><div class="focus__fill" id="progressFill"></div></div>
     </section>
 
-    <div class="progress" aria-hidden="true"><div id="progressFill" class="progress__fill"></div></div>
-
-    <div class="grip" aria-hidden="true"></div>
+    <!-- Tape: one strip, scrolled so that distance is time. -->
+    <section class="tape">
+      <div class="cover" aria-hidden="true"></div>
+      <div class="tape__viewport" id="viewport">
+        <div class="tape__track" id="track"></div>
+        <p class="tape__message" id="tapeMessage"></p>
+        <div class="tape__playhead" aria-hidden="true"></div>
+      </div>
+      <div class="tape__end">
+        <span class="tape__time" data-bind="time"></span>
+        <button class="close" data-no-drag title="Hide to tray" aria-label="Hide to tray">
+          <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 2.5l7 7M9.5 2.5l-7 7"/></svg>
+        </button>
+      </div>
+    </section>
   </main>
 
-  <script src="vendor/motion.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

@@ -1,0 +1,93 @@
+# Builds the Windows distributables and publishes them as a GitHub Release.
+#
+# Run it from the Actions tab (Release -> Run workflow) with a tag such as
+# v1.2.0, or push a tag matching v*. Windows builds need a Windows machine,
+# which is why this runs on a hosted runner rather than being built locally.
+#
+# Assets:
+#   SpotifyLyricsOverlay-portable.exe  one file, nothing to install or unzip
+#   SpotifyLyricsOverlay-win64.zip     the same app as a folder; starts faster
+#   SpotifyLyricsOverlay-Setup.exe     installer with Start Menu shortcuts
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag, e.g. v1.2.0"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    env:
+      TAG: ${{ github.event.inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt pyinstaller
+
+      - name: Render the app icon
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -c "import sys; from PyQt6.QtWidgets import QApplication; app = QApplication(sys.argv); from app.icon import write_ico; assert write_ico('app.ico')"
+
+      - name: Build portable folder
+        run: pyinstaller --noconfirm --windowed --name SpotifyLyricsOverlay --icon app.ico --add-data "web;web" --collect-all winsdk launch.py
+
+      - name: Zip portable folder
+        shell: pwsh
+        run: Compress-Archive -Path dist/SpotifyLyricsOverlay -DestinationPath SpotifyLyricsOverlay-win64.zip
+
+      # One self-extracting exe. It unpacks to a temp folder on each launch,
+      # so it starts a few seconds slower than the folder build.
+      - name: Build single-file portable exe
+        run: pyinstaller --noconfirm --onefile --windowed --name SpotifyLyricsOverlay-portable --icon app.ico --add-data "web;web" --collect-all winsdk --distpath dist-onefile --workpath build-onefile launch.py
+
+      - name: Build installer
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress }
+          & $iscc installer.iss
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG }}
+          target_commitish: ${{ github.sha }}
+          name: Spotify Lyrics Overlay ${{ env.TAG }}
+          fail_on_unmatched_files: false
+          files: |
+            dist-onefile/SpotifyLyricsOverlay-portable.exe
+            SpotifyLyricsOverlay-win64.zip
+            installer_output/SpotifyLyricsOverlay-Setup.exe
+          body: |
+            ## Downloads
+
+            - **SpotifyLyricsOverlay-portable.exe** — one file, no install. Double-click it and play something in Spotify.
+            - **SpotifyLyricsOverlay-win64.zip** — the same app as a folder. Unzip anywhere and run `SpotifyLyricsOverlay.exe`; starts faster than the single file.
+            - **SpotifyLyricsOverlay-Setup.exe** — installer with Desktop and Start Menu shortcuts.
+
+            Windows SmartScreen will warn about an unrecognised app because the build is not code-signed. Click **More info → Run anyway**.
+
+            ## What's new
+
+            - Two designs, chosen in Settings → Design:
+              - **Focus**: a card where the sung line is sharp and nearby lines drift out of focus.
+              - **Tape**: a slim strip that scrolls with the song, so pauses and instrumental breaks are visible as distance.
+            - Album art thumbnail in both designs.
+            - Each design remembers its own size and position.
+            - Fix: lyrics now come back if the same track resumes after Spotify restarts.

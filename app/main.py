@@ -17,6 +17,7 @@ enough -- dragging in particular sends two messages total, not one per frame.
 
 from __future__ import annotations
 
+import base64
 import ctypes
 import json
 import os
@@ -25,14 +26,14 @@ import threading
 from pathlib import Path
 from typing import Optional
 
-from PyQt6.QtCore import QObject, QPoint, QRect, QTimer, QUrl, pyqtSignal, Qt
-from PyQt6.QtGui import QAction, QCursor, QGuiApplication
+from PyQt6.QtCore import QBuffer, QIODevice, QObject, QPoint, QRect, QTimer, QUrl, pyqtSignal, Qt
+from PyQt6.QtGui import QAction, QCursor, QGuiApplication, QImage
 from PyQt6.QtWebEngineCore import QWebEnginePage, QWebEngineSettings
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWidgets import QApplication, QMainWindow, QMenu, QSystemTrayIcon
 
 from . import startup
-from .config import CACHE_DIR, ConfigStore
+from .config import CACHE_DIR, DEFAULT_SIZES, DESIGNS, SIZE_BOUNDS, ConfigStore
 from .icon import app_icon
 from .lyrics import LyricsProvider, LyricsResult
 from .palette import NEUTRAL_THEME, theme_from_image
@@ -48,16 +49,29 @@ BRIDGE_PREFIX = "LYRICBRIDGE"
 # Set LYRIC_OVERLAY_DEBUG=1 to trace bridge traffic on stderr.
 DEBUG = bool(os.environ.get("LYRIC_OVERLAY_DEBUG"))
 
-DEFAULT_WIDTH = 660
-DEFAULT_HEIGHT = 230
+# Album art is shown as a small thumbnail (22-30px, at up to 4x DPI), so it is
+# downscaled once here rather than shipping Spotify's full-size PNG to the page.
+ART_SIZE = 128
 
-# Resize bounds. The lower bounds are where the card stops being able to show a
-# lyric line plus its neighbours; the upper bounds stop a stray drag from
-# swallowing the screen.
-MIN_WIDTH = 340
-MIN_HEIGHT = 130
-MAX_WIDTH = 1800
-MAX_HEIGHT = 900
+
+def art_data_url(data: bytes) -> str:
+    """Downscale album art and encode it as a data URL. Empty if undecodable.
+
+    QImage is safe to use off the UI thread, unlike QPixmap.
+    """
+    image = QImage.fromData(data)
+    if image.isNull():
+        return ""
+    image = image.scaled(
+        ART_SIZE,
+        ART_SIZE,
+        Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+        Qt.TransformationMode.SmoothTransformation,
+    )
+    buffer = QBuffer()
+    buffer.open(QIODevice.OpenModeFlag.WriteOnly)
+    image.save(buffer, "PNG")
+    return "data:image/png;base64," + base64.b64encode(bytes(buffer.data())).decode("ascii")
 
 
 # ---------------------------------------------------------------------------
@@ -123,6 +137,7 @@ class Overlay(QMainWindow):
     playback_changed = pyqtSignal(object)
     spotify_auth_finished = pyqtSignal(bool, str)
     theme_ready = pyqtSignal(object)
+    art_ready = pyqtSignal(str)
 
     def __init__(self, store: ConfigStore) -> None:
         super().__init__()
@@ -185,6 +200,7 @@ class Overlay(QMainWindow):
 
         self.spotify_auth_finished.connect(self._spotify_connected)
         self.theme_ready.connect(self._on_theme_ready)
+        self.art_ready.connect(self._on_art_ready)
         self.playback_changed.connect(self._on_playback)
         # 120ms rather than 250ms: this interval is the floor on how fast a
         # track change is noticed, and it sits directly in front of the lyric
@@ -205,7 +221,7 @@ class Overlay(QMainWindow):
             flags |= Qt.WindowType.WindowStaysOnTopHint
         self.setWindowFlags(flags)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-        self.resize(DEFAULT_WIDTH, DEFAULT_HEIGHT)
+        self.resize(*DEFAULT_SIZES[self.store.settings.design])
 
     def _apply_always_on_top(self, enabled: bool) -> None:
         """Toggle the stay-on-top hint, preserving position and visibility.
@@ -249,10 +265,12 @@ class Overlay(QMainWindow):
 
     # -- persistence --------------------------------------------------------
 
+    @property
+    def design(self) -> str:
+        return self.store.settings.design
+
     def _restore_geometry(self) -> None:
-        settings = self.store.settings
-        x, y = settings.x, settings.y
-        width, height = settings.w, settings.h
+        x, y, width, height = self.store.settings.geometry(self.design)
 
         if x is None or y is None or not self._is_on_screen(x, y, width, height):
             self._center_near_bottom()
@@ -274,11 +292,12 @@ class Overlay(QMainWindow):
         if screen is None:
             return
         area = screen.availableGeometry()
+        width, height = DEFAULT_SIZES[self.design]
         self.setGeometry(
-            area.center().x() - DEFAULT_WIDTH // 2,
-            area.bottom() - DEFAULT_HEIGHT - 72,
-            DEFAULT_WIDTH,
-            DEFAULT_HEIGHT,
+            area.center().x() - width // 2,
+            area.bottom() - height - 72,
+            width,
+            height,
         )
         self._clamp_to_screen()
 
@@ -300,7 +319,23 @@ class Overlay(QMainWindow):
             self.move(x, y)
 
     def _save_geometry(self) -> None:
-        self.store.update(x=self.x(), y=self.y(), w=self.width(), h=self.height())
+        self.store.settings.set_geometry(
+            self.design, self.x(), self.y(), self.width(), self.height()
+        )
+        self.store.save()
+
+    def set_design(self, design: str) -> None:
+        """Switch between the Focus card and the Tape strip.
+
+        Each design remembers its own position and size, so the current one
+        is saved before the window takes on the other's shape.
+        """
+        if design not in DESIGNS or design == self.design:
+            return
+        self._save_geometry()
+        self.store.update(design=design)
+        self._restore_geometry()
+        self._call_js("overlaySetDesign", {"design": design})
 
     # -- bridge -------------------------------------------------------------
 
@@ -319,7 +354,8 @@ class Overlay(QMainWindow):
         for script in self._queued_calls:
             self.page.runJavaScript(script)
         self._queued_calls.clear()
-        # Push the saved appearance now that the page can receive it.
+        # Push the saved design and appearance now that the page can receive them.
+        self._call_js("overlaySetDesign", {"design": self.design})
         self._apply_appearance()
 
     def _on_bridge_message(self, message: dict) -> None:
@@ -371,8 +407,9 @@ class Overlay(QMainWindow):
         elif "n" in edge:
             height = start.height() - delta.y()
 
-        width = max(MIN_WIDTH, min(MAX_WIDTH, width))
-        height = max(MIN_HEIGHT, min(MAX_HEIGHT, height))
+        min_w, min_h, max_w, max_h = SIZE_BOUNDS[self.design]
+        width = max(min_w, min(max_w, width))
+        height = max(min_h, min(max_h, height))
 
         # Dragging a top or left edge moves the origin as well as the size.
         # Deriving it from the clamped size keeps the opposite edge pinned once
@@ -390,6 +427,11 @@ class Overlay(QMainWindow):
         if playback is None or not playback.title:
             self._call_js("overlaySetIdle", {"reason": "no-session"})
             self._set_tray_state(False, "Lyric Overlay — nothing playing")
+            # Forget the track, so that if the same one comes back (Spotify
+            # restarted, or a transient SMTC failure) it is sent again rather
+            # than leaving the cleared card empty.
+            self._current_key = ""
+            self._theme_key = ""
             return
 
         self._set_tray_state(playback.playing, f"{playback.title} — {playback.artist}")
@@ -429,24 +471,28 @@ class Overlay(QMainWindow):
     # -- album-art theming ---------------------------------------------------
 
     def _extract_theme(self, thumbnail: Optional[bytes]) -> None:
-        """Derive the card's colours from the album art, off the UI thread.
+        """Derive the card's colours and cover thumbnail, off the UI thread.
 
         Decoding and quantising costs a few milliseconds -- small, but it lands
         exactly when a track change is already doing the most work, so it stays
         off the thread that is animating the card.
         """
-        if not self.store.settings.theme_from_album:
-            self.theme_ready.emit(NEUTRAL_THEME)
-            return
         if not thumbnail:
             # No art (podcast, local file, some players). Fall back rather than
             # leaving the previous track's colours on screen.
             self.theme_ready.emit(NEUTRAL_THEME)
+            self.art_ready.emit("")
             return
+
+        tint = self.store.settings.theme_from_album
 
         def run() -> None:
             try:
-                theme = theme_from_image(thumbnail)
+                self.art_ready.emit(art_data_url(thumbnail))
+            except Exception:
+                self.art_ready.emit("")
+            try:
+                theme = theme_from_image(thumbnail) if tint else NEUTRAL_THEME
             except Exception:
                 theme = NEUTRAL_THEME
             self.theme_ready.emit(theme)
@@ -457,9 +503,13 @@ class Overlay(QMainWindow):
         """No artwork arrived for this track; fall back to the neutral theme."""
         if not self._theme_key:
             self._call_js("overlaySetTheme", NEUTRAL_THEME.as_payload())
+            self._call_js("overlaySetArt", {"src": ""})
 
     def _on_theme_ready(self, theme) -> None:
         self._call_js("overlaySetTheme", theme.as_payload())
+
+    def _on_art_ready(self, src: str) -> None:
+        self._call_js("overlaySetArt", {"src": src})
 
     def _on_lyrics_ready(self, key: str, result: LyricsResult) -> None:
         # Discard responses for tracks that are no longer playing.
@@ -542,6 +592,7 @@ class Overlay(QMainWindow):
         if self._settings_dialog is None:
             dialog = SettingsDialog(self.store, self._connect_spotify, None)
             dialog.appearance_changed.connect(self._apply_appearance)
+            dialog.design_changed.connect(self.set_design)
             dialog.finished.connect(self._settings_closed)
             self._settings_dialog = dialog
 
