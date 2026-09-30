@@ -12,6 +12,7 @@ from typing import Callable, Optional
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QCheckBox,
+    QComboBox,
     QDialog,
     QFormLayout,
     QFrame,
@@ -46,10 +47,17 @@ HELP_SPOTIFY = (
 )
 
 
+DESIGN_CHOICES = (
+    ("focus", "Focus — a card; nearby lines drift out of focus"),
+    ("tape", "Tape — a slim strip that scrolls with the song"),
+)
+
+
 class SettingsDialog(QDialog):
     """Live-editing settings panel. Appearance changes apply as you drag."""
 
     appearance_changed = pyqtSignal()
+    design_changed = pyqtSignal(str)
 
     def __init__(
         self,
@@ -82,6 +90,17 @@ class SettingsDialog(QDialog):
         box = QGroupBox("Appearance")
         form = QFormLayout(box)
         settings = self.store.settings
+
+        # Switching applies immediately, like the sliders, so the two designs
+        # can be compared by flicking between them.
+        self.design = QComboBox()
+        for key, label in DESIGN_CHOICES:
+            self.design.addItem(label, key)
+        self.design.setCurrentIndex(max(0, self.design.findData(settings.design)))
+        self.design.currentIndexChanged.connect(
+            lambda _index: self.design_changed.emit(self.design.currentData())
+        )
+        form.addRow("Design", self.design)
 
         self.opacity = QSlider(Qt.Orientation.Horizontal)
         self.opacity.setRange(10, 100)

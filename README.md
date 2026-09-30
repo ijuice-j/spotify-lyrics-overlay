@@ -2,7 +2,7 @@
 
 **A transparent, always-on-top desktop overlay that shows synced Spotify lyrics, highlighted word by word as the song plays.** Free, no API key, no account — download it and it works.
 
-![Spotify lyrics overlay on Windows showing word-by-word synced lyrics in a transparent floating window](docs/overlay.png)
+![Spotify lyrics overlay in its Focus design: the sung line is sharp and highlighted word by word, with the lines around it blurred](docs/design-focus.png)
 
 <p align="center">
   <a href="https://github.com/viraj-rgb/spotify-lyrics-overlay/releases/latest/download/SpotifyLyricsOverlay-Setup.exe">
@@ -16,7 +16,8 @@
 
 ## What it does
 
-- **Floating lyrics on your desktop** — a transparent card that stays above other windows, over any app or game.
+- **Floating lyrics on your desktop** — stays above other windows, over any app or game.
+- **Two designs** — a *Focus* card or a slim *Tape* strip. Switch in Settings; each remembers its own size and position.
 - **Word-by-word highlighting** — each word lights up as it is sung, karaoke style, not just line by line.
 - **Colours match the album cover** — the card is tinted from the artwork of whatever is playing, and crossfades when the track changes.
 - **Reads Spotify automatically** — no login, no Spotify Developer account, no API key. It uses the same Windows media info that powers the volume flyout.
@@ -54,6 +55,16 @@ shortcut. Your preferences live in `%USERPROFILE%\.lyric-overlay` and are left
 behind on purpose, so reinstalling keeps your layout; delete that folder to
 remove them too.
 
+## Designs
+
+**Focus** — a card. The line being sung is sharp; the lines around it are blurred and faded by distance, and each new line pulls into focus as it arrives.
+
+![Focus design](docs/design-focus.png)
+
+**Tape** — a single slim strip. The lyrics scroll past a fixed playhead, and distance on the tape is time: fast lines move quickly, and an instrumental break is a stretch of tape you can see coming. It takes almost no screen space.
+
+![Tape design](docs/design-tape.png)
+
 ## Album colours
 
 The card takes its colour from the cover of whatever is playing — the plate tint, the glow on the sung words, the progress bar and the aura around the edge.
@@ -70,6 +81,7 @@ Right-click the tray icon → **Settings**.
 
 | | |
 |---|---|
+| **Design** | Focus (card) or Tape (strip). Applies immediately. |
 | **Background opacity** | How see-through the card is. Only the background — the lyrics always stay solid. |
 | **Text size** | Scales the lyric type. |
 | **Tint from album cover** | Turn album colouring on or off. |
@@ -157,7 +169,7 @@ Spotify desktop app
    app/main.py     transparent, frameless Qt window
       |
       v
-     web/          renders and animates the card
+     web/          renders and animates the Focus card or the Tape strip
 ```
 
 The window is a frameless translucent Qt shell whose entire visible surface is a web view. Qt owns the window — transparency, stacking, dragging, resizing — and the web layer owns everything you can see.

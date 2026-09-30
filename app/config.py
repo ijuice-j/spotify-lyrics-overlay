@@ -10,22 +10,39 @@ from __future__ import annotations
 
 import json
 import threading
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 CONFIG_DIR = Path.home() / ".lyric-overlay"
 CONFIG_PATH = CONFIG_DIR / "config.json"
 CACHE_DIR = CONFIG_DIR / "cache"
 
+# The two overlay designs. Each keeps its own window geometry, because a card
+# and a strip want very different shapes and switching should not stretch one
+# into the other.
+DESIGNS = ("focus", "tape")
+DEFAULT_SIZES = {"focus": (600, 290), "tape": (800, 58)}
+# (min_w, min_h, max_w, max_h). Focus stops being able to show a line plus its
+# neighbours below its minimum; Tape is a single row of type at any height.
+SIZE_BOUNDS = {"focus": (340, 150, 1800, 900), "tape": (360, 40, 2400, 140)}
+
 
 @dataclass
 class Settings:
-    # Window geometry, written whenever the user finishes a move or resize.
+    # Which design is shown: "focus" (card) or "tape" (strip).
+    design: str = "focus"
+
+    # Window geometry per design, written whenever the user finishes a move or
+    # resize. The unprefixed fields belong to Focus, which predates Tape.
     x: Optional[int] = None
     y: Optional[int] = None
-    w: int = 660
-    h: int = 230
+    w: int = 600
+    h: int = 290
+    tape_x: Optional[int] = None
+    tape_y: Optional[int] = None
+    tape_w: int = 800
+    tape_h: int = 58
 
     # Appearance. `plate_core`/`plate_edge` are the card's opacity at its centre
     # and its edges; text is never dimmed with alpha, only the plate.
@@ -51,13 +68,31 @@ class Settings:
     spotify_refresh_token: str = ""
     preload_from_queue: bool = True
 
+    def geometry(self, design: str) -> Tuple[Optional[int], Optional[int], int, int]:
+        """(x, y, w, h) saved for `design`; x and y are None until first placed."""
+        if design == "tape":
+            return self.tape_x, self.tape_y, self.tape_w, self.tape_h
+        return self.x, self.y, self.w, self.h
+
+    def set_geometry(self, design: str, x: int, y: int, w: int, h: int) -> None:
+        if design == "tape":
+            self.tape_x, self.tape_y, self.tape_w, self.tape_h = x, y, w, h
+        else:
+            self.x, self.y, self.w, self.h = x, y, w, h
+
     def clamped(self) -> "Settings":
         """Pull values into supported ranges, in case the file was hand-edited."""
+        if self.design not in DESIGNS:
+            self.design = DESIGNS[0]
         self.plate_core = min(max(self.plate_core, 0.10), 1.0)
         self.plate_edge = min(max(self.plate_edge, 0.05), 1.0)
         self.text_scale = min(max(self.text_scale, 0.6), 2.0)
-        self.w = min(max(int(self.w), 340), 1800)
-        self.h = min(max(int(self.h), 130), 900)
+        for design in DESIGNS:
+            x, y, w, h = self.geometry(design)
+            min_w, min_h, max_w, max_h = SIZE_BOUNDS[design]
+            w = min(max(int(w), min_w), max_w)
+            h = min(max(int(h), min_h), max_h)
+            self.set_geometry(design, x, y, w, h)
         return self
 
 

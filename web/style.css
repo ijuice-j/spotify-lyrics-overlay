@@ -1,46 +1,68 @@
 /* Lyric overlay — visual layer.
 
-   Design constraints that shaped this:
-   - The card floats over an unknown backdrop (a bright IDE, a dark game, a
-     photo wallpaper). Contrast has to come from the card itself, not from
-     assumptions about what is behind it. Hence the near-opaque plate plus a
-     dark halo bleeding past its edge.
-   - `backdrop-filter` deliberately is not used. Inside QWebEngineView it can
-     only blur content within the page, and the page is otherwise empty, so it
-     would cost a compositor layer and blur nothing.
-   - Sung vs unsung is carried by weight and opacity, not hue. Colour-only
-     highlights disappear over a backdrop that happens to share the hue.
+   Two designs share this page, switched by data-design on the card:
+
+   - Focus: a tinted card. The sung line is sharp; the lines around it are
+     blurred and faded by distance, like a camera racking focus, and the next
+     line pulls into focus as it arrives.
+   - Tape: a slim strip. Every line is laid end to end and scrolled past a
+     fixed playhead so that distance is time — fast lines move quickly, and an
+     instrumental break is a visible stretch of tape.
+
+   Constraints both share:
+   - The card floats over an unknown backdrop, so contrast comes from the card
+     itself. Text is never dimmed with alpha against the desktop -- only
+     against the card's own plate.
+   - `backdrop-filter` is not used. Inside QWebEngineView it can only blur
+     content within the page, and the page is otherwise empty.
 */
 
 @font-face {
-  font-family: 'Bricolage Grotesque';
+  font-family: 'Mona Sans';
   font-style: normal;
-  font-weight: 200 800;
+  font-weight: 400 900;
+  font-stretch: 75% 125%;
   font-display: block;
-  src: url('vendor/bricolage-latin.woff2') format('woff2');
+  src: url('vendor/monasans-latin.woff2') format('woff2');
   unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
-                 U+02DC, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212,
-                 U+2215, U+FEFF, U+FFFD;
+                 U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122,
+                 U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
 }
 @font-face {
-  font-family: 'Bricolage Grotesque';
+  font-family: 'Mona Sans';
   font-style: normal;
-  font-weight: 200 800;
+  font-weight: 400 900;
+  font-stretch: 75% 125%;
   font-display: block;
-  src: url('vendor/bricolage-latinext.woff2') format('woff2');
+  src: url('vendor/monasans-latinext.woff2') format('woff2');
   unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF,
-                 U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB,
-                 U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+                 U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF,
+                 U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 400 600;
+  font-display: block;
+  src: url('vendor/jetbrainsmono-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+                 U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122,
+                 U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 400 600;
+  font-display: block;
+  src: url('vendor/jetbrainsmono-latinext.woff2') format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF,
+                 U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF,
+                 U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
 }
 
-/* Album-art theme.
-   Registered with @property so the browser knows these are colours and can
-   interpolate them -- a plain custom property would snap between tracks instead
-   of crossfading. Both are written from JS when the track changes.
-
-   Only hue comes from the artwork. --plate-tint is always near-black and
-   --accent always bright, so a pale or garish cover cannot make the card
-   unreadable. */
+/* Album colour. Only the hue comes from the artwork: --plate-tint is always
+   near-black and --accent always bright, so no cover can make the card
+   unreadable. Registered so that assigning them crossfades. */
 @property --plate-tint {
   syntax: '<color>';
   inherits: true;
@@ -53,39 +75,23 @@
 }
 
 :root {
-  --plate: 12, 13, 18;
-  --sung: 255, 255, 255;
-
-  /* Slow enough to read as a mood change rather than a flicker, and it lands
-     while the new track's first line is still animating in. */
   transition: --plate-tint 900ms ease-out, --accent 900ms ease-out;
 
-  /* Plate opacity. The overlay sits above arbitrary content -- an IDE, a
-     browser, a bright wallpaper -- so the backdrop has to be suppressed hard
-     enough that it never competes with the lyric text. Lower these two values
-     for a glassier, more see-through card. */
+  /* Plate opacity at the centre and edge (Settings > Background opacity). */
   --plate-core: 0.75;
   --plate-edge: 0.64;
 
-  /* Every ink is fully opaque. Dimming is done with solid grey tones, never
-     with alpha, so only the plate is see-through -- transparent text would let
-     the backdrop show *through the glyphs* and fall apart over busy content. */
-  --ink-sung: rgb(var(--sung));
-  --ink-unsung: rgb(152, 155, 164);
-  --ink-adjacent: rgb(108, 111, 120);
-  --ink-meta: rgb(140, 143, 152);
-
-  /* Carries legibility when the plate alone is not enough to suppress a
-     bright or noisy backdrop. */
-  --text-halo:
-    0 1px 2px rgba(0, 0, 0, 0.55),
-    0 2px 12px rgba(0, 0, 0, 0.40);
-
-  --hairline: rgba(var(--sung), 0.10);
-  --radius: 20px;
-
+  /* Written by JS from the card size and Settings > Text size. */
   --lyric-size: 30px;
-  --line-gap: 10px;
+  --tape-h: 58px;
+  --tape-size: 17px;
+
+  --ink: #ffffff;
+  --ink-unsung: rgba(255, 255, 255, 0.34);
+
+  /* The album hue pushed a little further into the plate than the palette
+     does on its own, so the Focus card reads as coloured, not black. */
+  --focus-plate: color-mix(in srgb, var(--accent) 16%, var(--plate-tint));
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -95,320 +101,322 @@ html, body {
   height: 100%;
   background: transparent;
   overflow: hidden;
-  /* The window itself is the hit area; without this the desktop shows through
-     as a click target in the rounded corners. */
   user-select: none;
   -webkit-user-select: none;
   cursor: default;
-  font-family: 'Bricolage Grotesque', system-ui, sans-serif;
-  font-optical-sizing: auto;
   -webkit-font-smoothing: antialiased;
 }
-
-/* ---------------------------------------------------------------- card --- */
 
 .card {
   position: relative;
   width: 100%;
   height: 100%;
-  display: flex;
-  flex-direction: column;
-  padding: 16px 22px 0;
-  border-radius: var(--radius);
-  border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--hairline));
-  background:
-    /* A faint top sheen keeps the plate from reading as flat black. */
-    linear-gradient(180deg, rgba(var(--sung), 0.055) 0%, rgba(var(--sung), 0) 42%),
-    /* A wash of the album's colour, strongest at the top where no text sits.
-       Kept weak: it should be felt rather than noticed, and it must not lift
-       the plate's lightness where the lyrics are. */
-    linear-gradient(165deg,
-      color-mix(in srgb, var(--accent) 9%, transparent) 0%,
-      transparent 52%),
-    /* Denser through the middle, where the lyrics sit, and thinner at the
-       edges. This keeps the card reading as translucent glass while still
-       killing enough of the backdrop that whatever is behind it cannot compete
-       with the words. */
-    radial-gradient(120% 100% at 50% 50%,
-      color-mix(in srgb, var(--plate-tint) calc(var(--plate-core) * 100%), transparent) 0%,
-      color-mix(in srgb, var(--plate-tint) calc(var(--plate-core) * 100%), transparent) 45%,
-      color-mix(in srgb, var(--plate-tint) calc(var(--plate-edge) * 100%), transparent) 100%);
-  /* The aura and halo are box-shadows rather than a child element, because the
-     card must clip its own contents (see overflow below) and a child drawn
-     outside the card would be clipped away. Shadows paint outside the border
-     box and follow its radius, so they survive. */
-  box-shadow:
-    /* Album-coloured aura bleeding past the edge. */
-    0 0 44px -6px color-mix(in srgb, var(--accent) 40%, transparent),
-    0 6px 26px -8px color-mix(in srgb, var(--accent) 26%, transparent),
-    /* Dark halo, so the card separates from bright backdrops. */
-    0 24px 60px -12px rgba(0, 0, 0, 0.70),
-    0 2px 10px rgba(0, 0, 0, 0.45),
-    inset 0 1px 0 rgba(var(--sung), 0.07);
-  /* Clip children to the rounded shape. Without this, square-cornered children
-     at the card's edge (the progress bar in particular) poke out past the
-     radius and visibly square off the bottom corners. */
-  overflow: hidden;
-  opacity: 0;
-  transform: translateY(10px) scale(0.985);
+  color: var(--ink);
+  font-family: 'Mona Sans', system-ui, sans-serif;
+  animation: card-in 560ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
-/* ---------------------------------------------------------------- meta --- */
-
-.meta {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 14px;
-  flex: 0 0 auto;
-  min-height: 15px;
+@keyframes card-in {
+  from { opacity: 0; transform: translateY(8px) scale(0.985); }
+  to   { opacity: 1; transform: none; }
 }
 
-.meta__text {
-  display: flex;
-  align-items: baseline;
-  gap: 7px;
-  min-width: 0;
-  font-size: 10.5px;
-  font-weight: 500;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--ink-meta);
-  text-shadow: var(--text-halo);
+.card[data-design='focus'] .tape,
+.card[data-design='tape'] .focus { display: none; }
+
+/* --------------------------------------------------------- shared bits -- */
+
+.cover {
+  flex-shrink: 0;
+  border-radius: 5px;
+  background-color: color-mix(in srgb, var(--accent) 30%, #15161b);
+  background-size: cover;
+  background-position: center;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
 }
 
-.meta__title,
-.meta__artist {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.meta__title { flex: 0 1 auto; color: rgba(var(--sung), 0.62); }
-.meta__artist { flex: 0 1 auto; font-weight: 400; }
-.meta__sep { flex: 0 0 auto; opacity: 0.5; }
-
-.meta__controls {
-  display: flex;
-  gap: 3px;
-  flex: 0 0 auto;
-  opacity: 0;
-  transition: opacity 160ms ease-out;
-}
-.card:hover .meta__controls { opacity: 1; }
-
-.ctl {
-  width: 19px;
-  height: 19px;
+.close {
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
   display: grid;
   place-items: center;
   border: 0;
-  border-radius: 6px;
+  border-radius: 7px;
   background: transparent;
-  color: rgba(var(--sung), 0.45);
-  font-family: inherit;
-  font-size: 13px;
-  line-height: 1;
+  color: rgba(255, 255, 255, 0.55);
   cursor: pointer;
-  transition: background 130ms ease-out, color 130ms ease-out;
+  opacity: 0;
+  transition: opacity 160ms ease-out, background 130ms ease-out, color 130ms ease-out;
 }
-.ctl:hover { background: rgba(var(--sung), 0.10); color: rgba(var(--sung), 0.92); }
-.ctl--close:hover { background: rgba(255, 86, 86, 0.22); color: #ff9b9b; }
+.close svg { width: 10px; height: 10px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; }
+.card:hover .close { opacity: 1; }
+.close:hover { background: rgba(255, 86, 86, 0.22); color: #ff9b9b; }
 
-/* --------------------------------------------------------------- stage --- */
+/* -------------------------------------------------------------- focus --- */
 
-.stage {
-  position: relative;
-  flex: 1 1 auto;
-  display: grid;
-  place-items: center;
-  overflow: hidden;
-  /* Feather the top and bottom so adjacent lines dissolve rather than clip. */
-  -webkit-mask-image: linear-gradient(180deg,
-    transparent 0%, #000 16%, #000 84%, transparent 100%);
-  mask-image: linear-gradient(180deg,
-    transparent 0%, #000 16%, #000 84%, transparent 100%);
-}
-
-.lines {
+.focus {
   position: absolute;
-  left: 0;
-  right: 0;
-  top: 50%;
+  inset: 0;
   display: flex;
   flex-direction: column;
-  gap: var(--line-gap);
-  align-items: center;
-  text-align: center;
+  padding: 18px 26px 20px;
+  border-radius: 22px;
+  overflow: hidden;
+  background: radial-gradient(120% 100% at 50% 50%,
+    color-mix(in srgb, var(--focus-plate) calc(var(--plate-core) * 100%), transparent) 0%,
+    color-mix(in srgb, var(--focus-plate) calc(var(--plate-core) * 100%), transparent) 50%,
+    color-mix(in srgb, var(--focus-plate) calc(var(--plate-edge) * 100%), transparent) 100%);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.07);
+}
+
+/* Film grain keeps the flat plate from reading as a digital fill. */
+.grain {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  mix-blend-mode: overlay;
+  opacity: 0.5;
   will-change: transform;
 }
 
-/* ---------------------------------------------------------------- line --- */
-
-.line {
-  display: block;
-  max-width: 100%;
-  padding: 0 4px;
-  font-size: var(--lyric-size);
-  line-height: 1.16;
-  letter-spacing: -0.018em;
-  font-weight: 600;
-  color: var(--ink-adjacent);
-  text-wrap: balance;
-  text-shadow: var(--text-halo);
-  transition: color 260ms ease-out;
-}
-
-/* Only the immediate neighbours are shown. A third visible line on each side
-   crowds the active one instead of giving it context.
-
-   Neighbours are dimmed with a solid colour, not opacity, so their glyphs stay
-   fully opaque. Distant lines are hidden outright (opacity 0) -- they still
-   occupy their box, because offsetTop drives the scroll maths. */
-.line[data-role='near'] { font-weight: 500; color: var(--ink-adjacent); }
-.line[data-role='far']  { font-weight: 500; opacity: 0; }
-
-.line[data-role='far'] { transition: opacity 300ms ease-out; }
-
-.line[data-role='active'] { color: var(--ink-unsung); }
-
-/* ---------------------------------------------------------------- word --- */
-
-.word {
-  position: relative;
-  display: inline-block;
-  white-space: pre;
-  /* The glyph fill comes entirely from the gradient. `color` must be
-     transparent: with background-clip:text the background paints *behind* the
-     text, so any opaque colour here would hide the sweep. */
-  color: transparent;
-  /* --p is the sweep position for this word, 0 → 1, written every frame from
-     JS. Both stops sit at --p, making a hard edge that travels through the
-     glyphs — so the highlight advances mid-word, not word-to-word. */
-  background-image: linear-gradient(
-    90deg,
-    var(--ink-sung) calc(var(--p, 0) * 100%),
-    var(--ink-unsung) calc(var(--p, 0) * 100%)
-  );
-  -webkit-background-clip: text;
-  background-clip: text;
-  /* Weight lifts as the word is sung — a cue that survives any backdrop,
-     including one that happens to be white. */
-  font-variation-settings: 'wght' calc(560 + var(--p, 0) * 200);
-}
-
-/* Only the word currently being sung gets a glow, so the line does not smear. */
-.word[data-live='1'] {
-  /* Keeps the dark halo underneath so the glow adds to legibility on a
-     transparent card rather than replacing it. */
-  text-shadow:
-    var(--text-halo),
-    0 0 18px rgba(var(--sung), 0.30),
-    0 0 34px color-mix(in srgb, var(--accent) 55%, transparent),
-    0 0 62px color-mix(in srgb, var(--accent) 30%, transparent);
-}
-
-/* Unsynced lyrics: no per-word timing, so the whole line simply reads bright. */
-.line[data-role='active'][data-unsynced='1'] { color: var(--ink-sung); font-weight: 700; }
-
-/* --------------------------------------------------------------- pulse --- */
-
-.pulse {
-  position: absolute;
-  display: none;
-  gap: 7px;
-  align-items: center;
-}
-.pulse span {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: rgba(var(--sung), 0.30);
-  animation: breathe 1500ms ease-in-out infinite;
-}
-.pulse span:nth-child(2) { animation-delay: 190ms; }
-.pulse span:nth-child(3) { animation-delay: 380ms; }
-
-@keyframes breathe {
-  0%, 100% { opacity: 0.22; transform: scale(0.82); }
-  50%      { opacity: 0.85; transform: scale(1.18); }
-}
-
-.card[data-state='idle'] .pulse,
-.card[data-state='instrumental'] .pulse { display: flex; }
-.card[data-state='idle'] .lines,
-.card[data-state='instrumental'] .lines { opacity: 0; }
-
-/* -------------------------------------------------------------- notice --- */
-
-.notice {
-  position: absolute;
-  bottom: 4px;
-  font-size: 11px;
-  font-weight: 400;
-  letter-spacing: 0.04em;
-  color: rgba(var(--sung), 0.34);
-  opacity: 0;
-  transition: opacity 200ms ease-out;
-}
-.card[data-state='nolyrics'] .notice { opacity: 1; }
-.card[data-state='nolyrics'] .pulse { display: none; }
-
-/* ------------------------------------------------------------ progress --- */
-
-.progress {
-  flex: 0 0 auto;
-  height: 3px;
-  /* Sits inside the card's horizontal padding and clear of the bottom edge, so
-     it never meets the rounded corners. Full-bleed reads as a bar that has
-     escaped the card; inset reads as part of it. */
-  margin: 0 0 10px;
-  border-radius: 999px;
-  background: rgba(var(--sung), 0.10);
-  overflow: hidden;
-}
-.progress__fill {
-  height: 100%;
-  width: 0;
-  border-radius: inherit;
-  background: linear-gradient(90deg,
-    color-mix(in srgb, var(--accent) 55%, transparent),
-    var(--accent));
-  transform-origin: left center;
-}
-
-/* -------------------------------------------------------------- resize --- */
-
-/* The window is frameless, so it has no OS resize border. The card's outer few
-   pixels act as one instead: JS works out which edge the pointer is near and
-   sets the cursor, and Python resizes the real window from there. */
-.card[data-resizing='1'] { cursor: inherit; }
-
-/* A subtle corner grip, so the affordance is discoverable rather than a hidden
-   hot zone. Fades in with the rest of the controls on hover. */
-.grip {
-  position: absolute;
-  right: 5px;
-  bottom: 5px;
-  width: 13px;
-  height: 13px;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 160ms ease-out;
-}
-.card:hover .grip { opacity: 0.55; }
-
-.grip::before,
-.grip::after {
+/* A soft vignette gives the plate depth without a gradient wash. */
+.focus::after {
   content: '';
   position: absolute;
-  right: 0;
-  background: rgb(var(--sung));
-  border-radius: 1px;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(120% 95% at 30% 45%, transparent 45%, rgba(0, 0, 0, 0.36) 100%);
 }
-.grip::before { bottom: 0; width: 11px; height: 1.5px; }
-.grip::after  { bottom: 0; width: 1.5px; height: 11px; }
+
+.focus__meta {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 24px;
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+.focus__meta .cover { width: 22px; height: 22px; }
+.focus__title { font-weight: 650; overflow: hidden; text-overflow: ellipsis; }
+.focus__artist { color: rgba(255, 255, 255, 0.5); overflow: hidden; text-overflow: ellipsis; }
+.focus__time {
+  margin-left: auto;
+  color: rgba(255, 255, 255, 0.5);
+  font-variant-numeric: tabular-nums;
+}
+.focus__meta .close { margin-right: -6px; }
+
+.focus__stage {
+  position: relative;
+  z-index: 1;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  -webkit-mask-image: linear-gradient(180deg, transparent 0, #000 16%, #000 84%, transparent 100%);
+  mask-image: linear-gradient(180deg, transparent 0, #000 16%, #000 84%, transparent 100%);
+}
+
+.focus__stack {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--lyric-size) * 0.27);
+}
+
+.slot {
+  font-weight: 700;
+  letter-spacing: -0.018em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-height: 1.2em;
+}
+.slot--far  { font-size: calc(var(--lyric-size) * 0.63); opacity: 0.2; filter: blur(2.4px); }
+.slot--near { font-size: calc(var(--lyric-size) * 0.73); opacity: 0.5; filter: blur(1.2px); }
+
+.slot--active {
+  font-size: var(--lyric-size);
+  font-weight: 760;
+  line-height: 1.14;
+  letter-spacing: -0.026em;
+  white-space: normal;
+  /* Two lines at most; the lift on the live word needs a little headroom. */
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  padding-top: 2px;
+}
+
+/* Status text (waiting, no lyrics) sits where the lyric would. */
+.slot--active[data-kind='message'] { color: rgba(255, 255, 255, 0.46); font-weight: 650; }
+.slot--active[data-kind='static'] { color: var(--ink); }
+.slot--active[data-kind='loading'] { color: rgba(255, 255, 255, 0.5); animation: breathe 1400ms ease-in-out infinite; }
+
+@keyframes breathe {
+  0%, 100% { opacity: 0.35; }
+  50%      { opacity: 1; }
+}
+
+/* A line change: the stack rises one step, the arriving line pulls into
+   focus and the departing one softens. The class is re-added to restart. */
+.focus__stack.is-rolling { animation: roll 720ms cubic-bezier(0.16, 1, 0.3, 1); }
+.focus__stack.is-rolling .slot--active { animation: pull 720ms cubic-bezier(0.16, 1, 0.3, 1); }
+.focus__stack.is-rolling [data-slot='-1'] { animation: push 720ms cubic-bezier(0.16, 1, 0.3, 1); }
+
+@keyframes roll { from { transform: translateY(calc(var(--lyric-size) * 1.1)); } to { transform: none; } }
+@keyframes pull { from { filter: blur(3px); opacity: 0.45; } to { filter: blur(0); opacity: 1; } }
+@keyframes push { from { filter: blur(0); opacity: 1; } to { filter: blur(1.2px); opacity: 0.5; } }
+
+/* --p is the sweep position for a word, 0 -> 1, written every frame from JS.
+   Both stops sit at --p, so a hard edge travels through the glyphs and the
+   highlight advances mid-word rather than word to word. */
+.word {
+  display: inline-block;
+  white-space: pre;
+  color: transparent;
+  background-image: linear-gradient(90deg,
+    var(--ink) calc(var(--p, 0) * 100%),
+    var(--ink-unsung) calc(var(--p, 0) * 100%));
+  -webkit-background-clip: text;
+  background-clip: text;
+  transition: transform 240ms ease-out;
+}
+.word[data-live='1'] {
+  transform: translateY(-2px);
+  filter: drop-shadow(0 0 14px rgba(255, 255, 255, 0.35));
+}
+
+.focus__progress {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  z-index: 1;
+  background: rgba(255, 255, 255, 0.08);
+}
+.focus__fill {
+  width: 0;
+  height: 100%;
+  background: var(--accent);
+}
+
+/* --------------------------------------------------------------- tape --- */
+
+.tape {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-template-columns: var(--tape-h) minmax(0, 1fr) auto;
+  align-items: center;
+  border-radius: 14px;
+  overflow: hidden;
+  background: color-mix(in srgb,
+    color-mix(in srgb, var(--accent) 6%, #111110) calc(min(1, var(--plate-core) + 0.2) * 100%),
+    transparent);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.07), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+.tape .cover {
+  justify-self: center;
+  width: calc(var(--tape-h) * 0.52);
+  height: calc(var(--tape-h) * 0.52);
+  border-radius: 6px;
+}
+
+.tape__viewport {
+  position: relative;
+  height: 100%;
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 44px, #000 calc(100% - 64px), transparent 100%);
+  mask-image: linear-gradient(90deg, transparent 0, #000 44px, #000 calc(100% - 64px), transparent 100%);
+}
+
+.tape__track {
+  position: absolute;
+  left: 0;
+  top: 0;
+  height: 100%;
+  /* Block, not flex: a flex container would drop the bare spaces between
+     word spans, and the tape's geometry depends on them. */
+  line-height: var(--tape-h);
+  white-space: pre;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: var(--tape-size);
+  font-variant-ligatures: none;
+  will-change: transform;
+}
+
+.tk { color: #77746d; }
+.tk[data-s='sung'] { color: #f2f0ea; }
+.tk[data-s='live'] {
+  color: transparent;
+  background-image: linear-gradient(90deg,
+    #f2f0ea calc(var(--p, 0) * 100%),
+    #77746d calc(var(--p, 0) * 100%));
+  -webkit-background-clip: text;
+  background-clip: text;
+}
+.tk--sep { color: var(--accent); }
+.tk--meta { color: rgba(255, 255, 255, 0.42); }
+.tk--break { font-style: italic; color: #8d8a82; }
+.tk--break[data-s='sung'] { color: #57554f; }
+.tk--break[data-s='live'] {
+  background-image: linear-gradient(90deg,
+    #57554f calc(var(--p, 0) * 100%),
+    #8d8a82 calc(var(--p, 0) * 100%));
+}
+
+.tape__playhead {
+  position: absolute;
+  left: 30%;
+  top: 26%;
+  bottom: 26%;
+  width: 2px;
+  margin-left: -1px;
+  border-radius: 1px;
+  background: var(--accent);
+  box-shadow: 0 0 10px var(--accent);
+}
+
+.tape__message {
+  position: absolute;
+  left: 30%;
+  top: 50%;
+  transform: translateY(-50%);
+  padding-left: 14px;
+  font-size: calc(var(--tape-size) * 0.8);
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.5);
+  white-space: nowrap;
+}
+.card[data-state='loading'] .tape__message { animation: breathe 1400ms ease-in-out infinite; }
+
+.tape__end {
+  position: relative;
+  height: 100%;
+  min-width: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding-right: 16px;
+}
+.tape__time {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.5);
+  font-variant-numeric: tabular-nums;
+  transition: opacity 160ms ease-out;
+}
+.tape__end .close { position: absolute; right: 12px; top: 50%; margin-top: -12px; }
+.card:hover .tape__time { opacity: 0; }
 
 @media (prefers-reduced-motion: reduce) {
-  .pulse span { animation: none; opacity: 0.5; }
-  .line, .ctl, .meta__controls { transition: none; }
+  .card, .focus__stack.is-rolling, .focus__stack.is-rolling .slot { animation: none; }
+  .word { transition: none; }
 }
