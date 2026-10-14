@@ -69,6 +69,11 @@ jobs:
           tag_name: ${{ env.TAG }}
           target_commitish: ${{ github.sha }}
           name: Spotify Lyrics Overlay ${{ env.TAG }}
+          # A tag with a suffix (v1.3.0-beta.1) is a test build: publish it as a
+          # pre-release and leave "latest" alone, since the README's download
+          # links point at releases/latest.
+          prerelease: ${{ contains(env.TAG, '-') }}
+          make_latest: ${{ !contains(env.TAG, '-') }}
           fail_on_unmatched_files: false
           files: |
             dist-onefile/SpotifyLyricsOverlay-portable.exe

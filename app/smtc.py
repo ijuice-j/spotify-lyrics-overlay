@@ -155,24 +155,49 @@ async def _read_session(session, want_thumbnail: bool = False) -> Optional[Playb
     )
 
 
-async def _find_spotify_session(manager):
-    """Prefer Spotify, but fall back to whatever is currently playing.
+def _is_playing(session) -> bool:
+    try:
+        return session.get_playback_info().playback_status == PlaybackStatus.PLAYING
+    except Exception:
+        return False
 
-    Running the overlay against a browser tab or another player is a reasonable
-    default -- the lyrics lookup is title/artist based and does not care which
-    app produced the metadata.
+
+async def _find_spotify_session(manager):
+    """Prefer Spotify, but follow whatever is actually playing.
+
+    Running the overlay against a browser tab (YouTube, YouTube Music) or
+    another player is a reasonable default -- the lyrics lookup is title/artist
+    based and does not care which app produced the metadata. Spotify only wins
+    while it is playing: a paused Spotify left open in the background must not
+    hide the song playing in the browser.
     """
     sessions = list(manager.get_sessions())
     if not sessions:
         return None
 
-    for session in sessions:
-        app_id = (session.source_app_user_model_id or "").lower()
-        if SPOTIFY_APP_ID_FRAGMENT in app_id:
-            return session
+    spotify = [
+        s for s in sessions
+        if SPOTIFY_APP_ID_FRAGMENT in (s.source_app_user_model_id or "").lower()
+    ]
+    playing = [s for s in sessions if _is_playing(s)]
 
+    for session in spotify:
+        if session in playing:
+            return session
+    if playing:
+        current = manager.get_current_session()
+        for session in playing:
+            if current is not None and session.source_app_user_model_id == current.source_app_user_model_id:
+                return session
+        return playing[0]
+
+    # Nothing playing: stay on the session Windows considers current, which is
+    # the one most recently used, so pausing a video keeps showing that video
+    # instead of jumping to a Spotify that was paused long ago.
     current = manager.get_current_session()
-    return current if current is not None else sessions[0]
+    if current is not None:
+        return current
+    return spotify[0] if spotify else sessions[0]
 
 
 class SmtcWatcher:

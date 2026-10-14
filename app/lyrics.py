@@ -71,6 +71,11 @@ SWEEP_TAIL_MS = 40
 # Assumed duration for the final line, which has no successor to bound it.
 LAST_LINE_MS = 4000
 
+# Bumped whenever the lookup learns to find lyrics it used to miss. A cached
+# miss from an older lookup is retried rather than trusted, so an improvement
+# reaches tracks that were already played and recorded as having no lyrics.
+LOOKUP_VERSION = 2
+
 _TIMESTAMP = re.compile(r"\[(\d+):(\d{2})(?:[.:](\d{1,3}))?\]")
 
 
@@ -271,18 +276,72 @@ _DASH_NOISE = re.compile(
 )
 
 
+# Video sites (YouTube in a browser) report the video title, which carries its
+# own decoration on top of the song name.
+_VIDEO_NOISE = re.compile(
+    r"\s*[\(\[【][^)\]】]*(official|video|audio|lyric|visuali[sz]er|\bmv\b|\bm/v\b|"
+    r"\bhd\b|\bhq\b|\b4k\b|performance|color coded|full song)[^)\]】]*[\)\]】]",
+    re.IGNORECASE,
+)
+# "Song | Album Name", "Song // Live Session": everything after the bar is
+# channel-specific trailing text, never part of the song name.
+_BAR_SUFFIX = re.compile(r"\s+(\||//|｜).*$")
+# A featured-artist credit outside brackets ("Song ft. Someone").
+_BARE_FEAT = re.compile(r"\s+(ft\.?|feat\.?|featuring)\s+.*$", re.IGNORECASE)
+# Uploading channels named after the artist rather than being the artist.
+_CHANNEL_SUFFIX = re.compile(r"(\s*-\s*topic|\s*vevo|\s+official)$", re.IGNORECASE)
+# "Artist - Song", the usual video title shape. En and em dashes are common too.
+_ARTIST_TITLE = re.compile(r"^(.+?)\s+[-–—]\s+(.+)$")
+
+
 def clean_title(title: str) -> str:
     cleaned = _NOISE.sub("", title)
+    cleaned = _VIDEO_NOISE.sub("", cleaned)
+    cleaned = _BAR_SUFFIX.sub("", cleaned)
     cleaned = _DASH_NOISE.sub("", cleaned)
-    return cleaned.strip() or title.strip()
+    cleaned = _BARE_FEAT.sub("", cleaned)
+    return cleaned.strip().strip("\"'“”") or title.strip()
+
+
+def clean_artist(artist: str) -> str:
+    """Strip channel decoration: "The Weeknd - Topic", "TaylorSwiftVEVO"."""
+    return _CHANNEL_SUFFIX.sub("", artist.strip()).strip() or artist.strip()
 
 
 def primary_artist(artist: str) -> str:
     """Take the first credited artist; LRCLIB indexes on that."""
-    for separator in (",", ";", " & ", " feat. ", " featuring ", " x ", " X "):
+    for separator in (",", ";", " & ", " feat. ", " featuring ", " ft. ", " x ", " X "):
         if separator in artist:
             artist = artist.split(separator)[0]
     return artist.strip()
+
+
+def split_artist_title(title: str) -> Optional[tuple[str, str]]:
+    """Split a video-style "Artist - Song" title into (artist, song).
+
+    Returns None when the title has no such shape. Applied to an already
+    cleaned title, so "(Official Video)" and friends are gone by then.
+    """
+    match = _ARTIST_TITLE.match(title)
+    if not match:
+        return None
+    artist, song = match.group(1).strip(), clean_title(match.group(2))
+    if not artist or not song:
+        return None
+    return primary_artist(artist), song
+
+
+def looks_like_video(artist: str, album: str) -> bool:
+    """True when the metadata probably came from a video site, not a music app.
+
+    Music apps always report an album; YouTube in a browser does not, and its
+    "artist" is the uploading channel, which often carries a channel suffix.
+    """
+    return not album.strip() or clean_artist(artist) != artist.strip()
+
+
+def _tokens(text: str) -> set[str]:
+    return set(re.findall(r"\w+", unicodedata.normalize("NFKC", text).lower()))
 
 
 # --------------------------------------------------------------------------
@@ -346,6 +405,9 @@ class LyricsProvider:
         except (OSError, json.JSONDecodeError):
             return None
 
+        if not payload.get("lines") and payload.get("lookup", 1) < LOOKUP_VERSION:
+            return None
+
         lines = [
             Line(
                 start_ms=item["start_ms"],
@@ -373,6 +435,7 @@ class LyricsProvider:
                         "source": result.source,
                         "track": result.track,
                         "artist": result.artist,
+                        "lookup": LOOKUP_VERSION,
                     }
                 ),
                 encoding="utf-8",
@@ -422,14 +485,37 @@ class LyricsProvider:
         """
         duration_s = round(duration_ms / 1000) if duration_ms else 0
         clean = clean_title(title)
-        primary = primary_artist(artist)
+        primary = primary_artist(clean_artist(artist))
+        split = split_artist_title(clean)
 
         strategies: List[Callable[[], Optional[LyricsResult]]] = [
             lambda: self._api_get(artist, title, album, duration_s),
         ]
         if (clean, primary) != (title, artist):
             strategies.append(lambda: self._api_get(primary, clean, album, duration_s))
-        strategies.append(lambda: self._api_search(primary, clean, duration_s))
+
+        # A video title of the form "Artist - Song" names the real artist,
+        # while the reported artist is only the uploading channel. For video
+        # metadata that reading is tried before the reported artist; for a
+        # music app it is a late fallback, since there a dash usually belongs
+        # to the song name itself.
+        by_split: List[Callable[[], Optional[LyricsResult]]] = []
+        if split is not None:
+            split_artist, split_song = split
+            by_split = [
+                lambda: self._api_get(split_artist, split_song, "", duration_s),
+                lambda: self._api_search(split_artist, split_song, duration_s),
+            ]
+        by_reported = [lambda: self._api_search(primary, clean, duration_s)]
+        if looks_like_video(artist, album):
+            strategies += by_split + by_reported
+        else:
+            strategies += by_reported + by_split
+
+        # Free-text search last: the most forgiving of messy titles, and so the
+        # least trustworthy, which is why its candidates are checked first.
+        query = clean if split is not None else f"{primary} {clean}"
+        strategies.append(lambda: self._api_query(query, duration_s))
 
         results: List[Optional[LyricsResult]] = [None] * len(strategies)
         pending = set(range(len(strategies)))
@@ -517,6 +603,48 @@ class LyricsProvider:
             synced.sort(key=lambda c: abs((c.get("duration") or 0) - duration_s))
 
         return self._to_result(synced[0], source="lrclib:search")
+
+    def _api_query(self, query: str, duration_s: int) -> Optional[LyricsResult]:
+        """Free-text search, for titles too messy for the field-based lookups.
+
+        The `q` search matches loosely, so a candidate is only accepted when
+        every word of its (cleaned) title appears in the query -- otherwise a
+        query for one song can return a different song that shares a word.
+        Among those, an artist named in the query wins, then the closest
+        duration.
+        """
+        try:
+            response = self.session.get(
+                f"{LRCLIB_BASE}/search", params={"q": query}, timeout=self.timeout
+            )
+            candidates = response.json() if response.status_code == 200 else []
+        except (requests.RequestException, ValueError):
+            return None
+        if not isinstance(candidates, list):
+            return None
+
+        query_tokens = _tokens(query)
+        query_compact = re.sub(r"\W", "", query.lower())
+
+        def plausible(candidate: dict) -> bool:
+            title_tokens = _tokens(clean_title(candidate.get("trackName") or ""))
+            return bool(title_tokens) and title_tokens <= query_tokens
+
+        def rank(candidate: dict) -> tuple:
+            artist = re.sub(r"\W", "", (candidate.get("artistName") or "").lower())
+            named = bool(artist) and artist in query_compact
+            distance = abs((candidate.get("duration") or 0) - duration_s) if duration_s else 0
+            return (not named, distance)
+
+        synced = sorted(
+            (c for c in candidates if c.get("syncedLyrics") and plausible(c)), key=rank
+        )
+        if synced:
+            return self._to_result(synced[0], source="lrclib:query")
+        for candidate in candidates:
+            if candidate.get("plainLyrics") and plausible(candidate):
+                return self._to_result(candidate, source="lrclib:query")
+        return None
 
     def _to_result(self, payload: dict, source: str) -> LyricsResult:
         track = payload.get("trackName", "") or ""

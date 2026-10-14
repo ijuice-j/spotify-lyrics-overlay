@@ -21,6 +21,7 @@
 - **Word-by-word highlighting** — each word lights up as it is sung, karaoke style, not just line by line.
 - **Colours match the album cover** — the card is tinted from the artwork of whatever is playing, and crossfades when the track changes.
 - **Reads Spotify automatically** — no login, no Spotify Developer account, no API key. It uses the same Windows media info that powers the volume flyout.
+- **Works with YouTube too** — YouTube and YouTube Music playing in your browser are picked up the same way. Video titles like "Artist - Song (Official Video)" are cleaned up before the lyrics lookup. Spotify takes priority only while it is playing.
 - **Drag it anywhere, resize it** — grab any edge or corner. Position and size are remembered.
 - **Lives in the system tray** — click the icon to show or hide. It stays out of the taskbar and Alt-Tab, so it behaves like an overlay, not an app you switch to.
 
