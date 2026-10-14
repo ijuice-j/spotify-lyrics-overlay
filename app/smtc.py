@@ -60,6 +60,11 @@ class Playback:
     # than the rest of the snapshot, so it is not fetched on every poll.
     thumbnail: Optional[bytes] = None
 
+    # Identity of the position snapshot this reading came from: the raw
+    # position plus the time it was published. Unchanged between polls means
+    # the player has not published a new position since.
+    snapshot: tuple = ()
+
     @property
     def track_key(self) -> str:
         """Identity used to decide whether the track changed.
@@ -128,16 +133,20 @@ async def _read_session(session, want_thumbnail: bool = False) -> Optional[Playb
     # Correct for snapshot staleness. `last_updated_time` is an aware datetime
     # in UTC; if it is missing or nonsensical we simply treat the reading as
     # fresh, which is what the naive implementation would have done anyway.
+    #
+    # Spotify republishes its position about once a second, so its snapshots
+    # are always young. Browsers (YouTube in Chrome or Edge) publish one only on
+    # play, pause and seek, so a snapshot minutes old is normal there and must
+    # still be honoured. An age that would run past the end of the track is
+    # the one thing rejected, as a sign of a bogus or default timestamp.
     captured_at = time.monotonic()
     last_updated = getattr(timeline, "last_updated_time", None)
+    snapshot = (position_ms, str(last_updated))
     if playing and last_updated is not None:
         try:
-            age = (datetime.now(timezone.utc) - last_updated).total_seconds()
-            # Guard against clock skew and against Spotify publishing a stale
-            # timestamp when paused/seeking; anything beyond a few seconds is
-            # more likely to be a bug than a genuinely old snapshot.
-            if 0.0 <= age <= 5.0:
-                position_ms += int(age * 1000)
+            age_ms = (datetime.now(timezone.utc) - last_updated).total_seconds() * 1000
+            if age_ms >= 0 and (not duration_ms or position_ms + age_ms <= duration_ms + 2000):
+                position_ms += int(age_ms)
         except (TypeError, ValueError, OverflowError):
             pass
 
@@ -152,6 +161,7 @@ async def _read_session(session, want_thumbnail: bool = False) -> Optional[Playb
         position_ms=position_ms,
         captured_at=captured_at,
         thumbnail=thumbnail,
+        snapshot=snapshot,
     )
 
 
@@ -200,6 +210,36 @@ async def _find_spotify_session(manager):
     return spotify[0] if spotify else sessions[0]
 
 
+class _Playhead:
+    """Keeps the playhead moving between a player's position snapshots.
+
+    Each new snapshot is taken as truth. While the player keeps reporting the
+    same snapshot, the position is carried forward on our own clock instead --
+    advancing only while playing -- because re-reading that snapshot would pin
+    the playhead to wherever it was when the snapshot was published.
+    """
+
+    def __init__(self) -> None:
+        self._key: tuple = ()
+        self._position_ms = 0.0
+        self._at = 0.0
+        self._playing = False
+
+    def apply(self, playback: Playback) -> None:
+        key = (playback.track_key, playback.snapshot)
+        if key != self._key:
+            self._key = key
+            self._position_ms = float(playback.position_ms)
+        elif self._playing:
+            self._position_ms += (playback.captured_at - self._at) * 1000.0
+        self._at = playback.captured_at
+        self._playing = playback.playing
+
+        if playback.duration_ms:
+            self._position_ms = min(self._position_ms, float(playback.duration_ms))
+        playback.position_ms = int(self._position_ms)
+
+
 class SmtcWatcher:
     """Polls SMTC on a background thread and reports changes via callback.
 
@@ -237,6 +277,7 @@ class SmtcWatcher:
         seen_key = ""        # Track identity as of the previous poll.
         art_key = ""         # Track we have successfully read art for.
         last_art_try = 0.0   # Monotonic time of the last art request.
+        playhead = _Playhead()
         while not self._stop.is_set():
             try:
                 if manager is None:
@@ -264,6 +305,7 @@ class SmtcWatcher:
                     playback = await _read_session(session, want_thumbnail=want_art)
 
                     if playback is not None:
+                        playhead.apply(playback)
                         if playback.track_key != seen_key:
                             # New track: drop any art we were holding, and let
                             # the next poll fetch this one's.
